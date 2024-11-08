@@ -1,0 +1,257 @@
+conda create -n NAME python=3.10.11
+
+conda activate NAME
+
+
+
+pip install pyinstaller
+
+pip install pyttsx3
+
+pip install pywin32
+
+
+
+
+
+
+import win32com.client
+import time
+
+def test_voices():
+    speaker = win32com.client.Dispatch("SAPI.SpVoice")
+    voices = speaker.GetVoices()
+    
+    print("\nAvailable Voices:")
+    print("-----------------")
+    
+    for i in range(voices.Count):
+        voice = voices.Item(i)
+        print(f"\nVoice {i+1}: {voice.GetDescription()}")
+        
+        # Set the voice
+        speaker.Voice = voice
+        
+        # Test speech
+        print("Testing voice...")
+        speaker.Speak("Hello, this is a test of my voice. How do I sound?")
+        time.sleep(1)  # Pause between voices
+        
+    print("\nVoice testing complete!")
+
+if __name__ == "__main__":
+    test_voices()
+
+
+python test_voices.py                ---------Look for voices on system
+
+
+
+
+pip install comtypes
+
+
+
+import win32com.client
+import re
+import json
+import tkinter as tk
+from tkinter import filedialog, ttk
+import winreg
+import pythoncom
+
+class VoiceReader:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("Voice Reader")
+        self.root.geometry("500x400")
+        
+        # Initialize speech engine and get ALL voices
+        pythoncom.CoInitialize()  # Initialize COM
+        self.speaker = win32com.client.Dispatch("SAPI.SpVoice")
+        self.voices = self.get_all_voices()
+        
+        # Print available voices for debugging
+        print("Available Voices:")
+        for voice in self.voices:
+            try:
+                print(f"- {voice.GetDescription()}")
+            except:
+                print("- [Error getting voice description]")
+        
+        self.create_gui()
+    
+    def get_all_voices(self):
+        voices = []
+        
+        # Get SAPI voices
+        try:
+            tokens = win32com.client.Dispatch("SAPI.SpObjectTokenCategory")
+            tokens.SetId(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech\Voices", False)
+            sapi_voices = tokens.EnumerateTokens()
+            for voice in sapi_voices:
+                voices.append(voice)
+        except Exception as e:
+            print(f"Error getting SAPI voices: {str(e)}")
+        
+        # Get OneCore voices
+        try:
+            tokens = win32com.client.Dispatch("SAPI.SpObjectTokenCategory")
+            tokens.SetId(r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech_OneCore\Voices", False)
+            onecore_voices = tokens.EnumerateTokens()
+            for voice in onecore_voices:
+                voices.append(voice)
+        except Exception as e:
+            print(f"Error getting OneCore voices: {str(e)}")
+            
+        # Try alternate registry path
+        try:
+            onecore_key_path = r"SOFTWARE\Microsoft\Speech_OneCore\Voices\Tokens"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, onecore_key_path, 0, 
+                              winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+                for i in range(winreg.QueryInfoKey(key)[0]):
+                    try:
+                        voice_name = winreg.EnumKey(key, i)
+                        voice_key_path = f"{onecore_key_path}\\{voice_name}"
+                        token = win32com.client.Dispatch("SAPI.SpObjectToken")
+                        token.SetId(f"HKEY_LOCAL_MACHINE\\{voice_key_path}", False)
+                        voices.append(token)
+                    except Exception as e:
+                        print(f"Error loading voice {voice_name}: {str(e)}")
+        except Exception as e:
+            print(f"Error accessing alternate voice path: {str(e)}")
+        
+        # Remove duplicates while preserving order
+        unique_voices = []
+        seen_descriptions = set()
+        for voice in voices:
+            try:
+                desc = voice.GetDescription()
+                if desc not in seen_descriptions:
+                    seen_descriptions.add(desc)
+                    unique_voices.append(voice)
+            except:
+                continue
+        
+        return unique_voices
+        
+    def create_gui(self):
+        # Voice Selection
+        frame = ttk.LabelFrame(self.root, text="Settings", padding="10")
+        frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Label(frame, text="Select Voice:").pack(anchor="w")
+        self.voice_var = tk.StringVar()
+        self.voice_combo = ttk.Combobox(frame, 
+            textvariable=self.voice_var, 
+            width=50,
+            height=20  # Show more items in dropdown
+        )
+        self.voice_combo['values'] = [voice.GetDescription() for voice in self.voices]
+        if self.voices:
+            self.voice_combo.set(self.voices[0].GetDescription())
+        self.voice_combo.pack(fill="x", pady=5)
+        
+        # Speed Control
+        ttk.Label(frame, text="Speech Rate (-10 to 10):").pack(anchor="w")
+        self.rate_var = tk.IntVar(value=0)
+        rate_scale = ttk.Scale(frame, from_=-10, to=10, variable=self.rate_var, orient='horizontal')
+        rate_scale.pack(fill="x", pady=5)
+        
+        # Buttons
+        button_frame = ttk.Frame(self.root)
+        button_frame.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Button(button_frame, text="Select File & Read", command=self.read_file).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Test Voice", command=self.test_voice).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Stop", command=self.stop_speaking).pack(side="left", padx=5)
+        
+        # Status
+        self.status_var = tk.StringVar(value="Ready")
+        status_label = ttk.Label(self.root, textvariable=self.status_var)
+        status_label.pack(pady=10)
+    
+    def clean_text(self, text):
+        cleaned = re.sub(r'[^a-zA-Z.,!? \n]', '', text)
+        cleaned = ' '.join(cleaned.split())
+        return cleaned
+    
+    def read_json_file(self, file_path):
+        with open(file_path, 'r', encoding='utf-8') as file:
+            data = json.load(file)
+            if isinstance(data, list):
+                text = " ".join(str(item) for item in data)
+            elif isinstance(data, dict):
+                text = " ".join(str(value) for value in data.values())
+            return text
+    
+    def stop_speaking(self):
+        self.speaker.Speak("", 3)  # 3 is the flag to stop speaking
+        self.status_var.set("Stopped")
+    
+    def test_voice(self):
+        try:
+            selected_name = self.voice_var.get()
+            for voice in self.voices:
+                if voice.GetDescription() == selected_name:
+                    self.speaker.Voice = voice
+                    break
+            
+            self.speaker.Rate = self.rate_var.get()
+            self.status_var.set("Testing voice...")
+            self.speaker.Speak("Hello! This is a test of my voice. How do I sound?")
+            self.status_var.set("Ready")
+        except Exception as e:
+            self.status_var.set(f"Error: {str(e)}")
+    
+    def read_file(self):
+        file_path = filedialog.askopenfilename(
+            title="Select file to read",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("JSON files", "*.json"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if file_path:
+            try:
+                # Set voice and rate
+                selected_name = self.voice_var.get()
+                for voice in self.voices:
+                    if voice.GetDescription() == selected_name:
+                        self.speaker.Voice = voice
+                        break
+                
+                self.speaker.Rate = self.rate_var.get()
+                
+                # Read the file
+                if file_path.lower().endswith('.json'):
+                    text = self.read_json_file(file_path)
+                else:
+                    with open(file_path, 'r', encoding='utf-8') as file:
+                        text = file.read()
+                
+                clean_content = self.clean_text(text)
+                self.status_var.set("Reading file...")
+                self.speaker.Speak(clean_content)
+                self.status_var.set("Ready")
+            except Exception as e:
+                self.status_var.set(f"Error: {str(e)}")
+    
+    def run(self):
+        self.root.mainloop()
+
+if __name__ == "__main__":
+    app = VoiceReader()
+    app.run()
+
+
+
+
+
+
+
+
+pyinstaller --onefile --name VoiceReader voice_reader.py      ----Make .exe
+
